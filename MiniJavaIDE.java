@@ -1098,6 +1098,91 @@ public class MiniJavaIDE {
         return rewritten;
     }
 
+    private static Path prepareJarSourceTree(
+            Path currentSourceFile,
+            String currentCode,
+            Path targetRoot
+    ) throws IOException {
+
+        Path projectRoot = getProjectRoot(
+                currentSourceFile == null
+                        ? null
+                        : currentSourceFile.toAbsolutePath().normalize()
+        );
+
+        if (projectRoot == null || currentSourceFile == null) {
+
+            Path target = targetRoot.resolve(getClassName(currentCode) + ".java");
+            Files.writeString(target, currentCode, StandardCharsets.UTF_8);
+
+            return target;
+
+        }
+
+        Path normalizedCurrentSource = currentSourceFile.toAbsolutePath().normalize();
+        Path currentTarget = null;
+
+        try (java.util.stream.Stream<Path> stream = Files.walk(projectRoot)) {
+
+            Iterator<Path> iterator = stream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith(".java"))
+                    .iterator();
+
+            while (iterator.hasNext()) {
+
+                Path javaSource = iterator.next().toAbsolutePath().normalize();
+                Path relativePath = projectRoot.relativize(javaSource);
+                Path target = targetRoot.resolve(relativePath).normalize();
+
+                if (!target.startsWith(targetRoot)) {
+
+                    continue;
+
+                }
+
+                String javaCode = javaSource.equals(normalizedCurrentSource)
+                        ? currentCode
+                        : Files.readString(javaSource, StandardCharsets.UTF_8);
+                String jarCode = rewriteResourceLinksForJar(javaSource, javaCode);
+
+                Files.createDirectories(target.getParent());
+                Files.writeString(target, jarCode, StandardCharsets.UTF_8);
+
+                if (javaSource.equals(normalizedCurrentSource)) {
+
+                    currentTarget = target;
+
+                }
+            }
+        }
+
+        if (currentTarget == null) {
+
+            currentTarget = targetRoot.resolve(getClassName(currentCode) + ".java");
+            Files.writeString(
+                    currentTarget,
+                    rewriteResourceLinksForJar(currentSourceFile, currentCode),
+                    StandardCharsets.UTF_8
+            );
+
+        }
+
+        return currentTarget;
+    }
+
+    private static java.util.List<Path> listJavaSources(Path root) throws IOException {
+
+        try (java.util.stream.Stream<Path> stream = Files.walk(root)) {
+
+            return stream.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith(".java"))
+                    .map(path -> path.toAbsolutePath().normalize())
+                    .sorted()
+                    .collect(java.util.stream.Collectors.toList());
+        }
+    }
+
     private static String rewriteSinglePathCall(
             String code,
             Pattern pattern,
@@ -1397,13 +1482,10 @@ public class MiniJavaIDE {
             Files.createDirectories(sourceDir);
             Files.createDirectories(classesDir);
 
-            Path javaFile = sourceDir.resolve(className + ".java");
             Path launcherFile = sourceDir.resolve("MiniJavaIDEJarLauncher.java");
             Path resourcesFile = sourceDir.resolve("MiniJavaIDEEmbeddedResources.java");
+            Path javaFile = prepareJarSourceTree(sourceFile, code, sourceDir);
 
-            String jarCode = rewriteResourceLinksForJar(sourceFile, code);
-
-            Files.writeString(javaFile, jarCode, StandardCharsets.UTF_8);
             Files.writeString(
                     launcherFile,
                     createJarLauncherSource(fullClassName),
@@ -1424,13 +1506,21 @@ public class MiniJavaIDE {
             compileCommand.add("-classpath");
             compileCommand.add(classesDir.toString());
             compileCommand.add("-sourcepath");
-            Path jarSourceRoot = getSourceRoot(sourceFile, code);
-            compileCommand.add(jarSourceRoot == null
-                    ? sourceDir.toString()
-                    : jarSourceRoot.toString());
+            compileCommand.add(sourceDir.toString());
             compileCommand.add(javaFile.toString());
             compileCommand.add(launcherFile.toString());
             compileCommand.add(resourcesFile.toString());
+
+            for (Path javaSource : listJavaSources(sourceDir)) {
+
+                if (!javaSource.equals(javaFile)
+                        && !javaSource.equals(launcherFile)
+                        && !javaSource.equals(resourcesFile)) {
+
+                    compileCommand.add(javaSource.toString());
+
+                }
+            }
 
             ProcessBuilder compileBuilder = new ProcessBuilder(compileCommand);
 
