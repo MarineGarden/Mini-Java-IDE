@@ -24,6 +24,7 @@ public class MiniJavaIDE {
             Paths.get(System.getProperty("user.dir"), "temp").toAbsolutePath().normalize();
     private static final Path IMPORT_DIR = TEMP_DIR.resolve("imports");
     private static final Path WORK_DIR = TEMP_DIR.resolve("work");
+    private static Component draggedTabComponent;
 
     private static int versionCounter = 1;
 
@@ -119,6 +120,7 @@ public class MiniJavaIDE {
 
         // ===== Tab drop support =====
         addFileDropSupport(frame, tabbedPane, tabbedPane);
+        addNewJavaFileTab(frame, tabbedPane);
 
         // ===== Run =====
         runButton.addActionListener(e -> {
@@ -1680,23 +1682,496 @@ public class MiniJavaIDE {
         closeButton.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         closeButton.addActionListener(e -> {
 
-            int index = tabbedPane.indexOfComponent(scroll);
-
-            if (index != -1) {
-
-                tabbedPane.remove(index);
-                editorMap.remove(className);
-                editorFileMap.remove(className);
-
-            }
+            removeTabComponent(tabbedPane, scroll);
         });
 
         panel.add(titleLabel);
         panel.add(jarButton);
         panel.add(javaButton);
         panel.add(closeButton);
+        installTabInteractions(tabbedPane, panel, titleLabel, scroll);
 
         return panel;
+    }
+
+    private static void addNewJavaFileTab(JFrame frame, JTabbedPane tabbedPane) {
+
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setName("NEW_JAVA_FILE_TAB");
+
+        JPanel formPanel = new JPanel(new GridBagLayout());
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.gridx = 0;
+        constraints.gridy = 0;
+        constraints.anchor = GridBagConstraints.WEST;
+        constraints.insets = new Insets(12, 16, 4, 8);
+
+        Font labelFont = UIManager.getFont("Label.font").deriveFont(30f);
+
+        JLabel nameLabel = new JLabel("new Java file name : ");
+        nameLabel.setFont(labelFont);
+        formPanel.add(nameLabel, constraints);
+
+        JTextField nameField = new JTextField();
+        nameField.setPreferredSize(new Dimension(200, 32));
+
+        JLabel extensionLabel = new JLabel(".java");
+        extensionLabel.setFont(UIManager.getFont("Label.font").deriveFont(18f));
+
+        JPanel nameRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        nameRow.add(nameField);
+        nameRow.add(extensionLabel);
+
+        constraints.gridy++;
+        constraints.insets = new Insets(0, 16, 16, 8);
+        formPanel.add(nameRow, constraints);
+
+        JLabel locationLabel = new JLabel("file location : ");
+        locationLabel.setFont(labelFont);
+
+        constraints.gridy++;
+        constraints.insets = new Insets(0, 16, 4, 8);
+        formPanel.add(locationLabel, constraints);
+
+        JTextField locationField = new JTextField();
+        locationField.setPreferredSize(new Dimension(250, 32));
+
+        JButton browseButton = new JButton("browse");
+        browseButton.addActionListener(e -> {
+
+            JFileChooser chooser = new JFileChooser();
+            chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+
+            if (chooser.showOpenDialog(frame) == JFileChooser.APPROVE_OPTION) {
+
+                locationField.setText(chooser.getSelectedFile().getAbsolutePath());
+
+            }
+        });
+
+        JPanel locationRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        locationRow.add(locationField);
+        locationRow.add(browseButton);
+
+        constraints.gridy++;
+        constraints.insets = new Insets(0, 16, 16, 8);
+        formPanel.add(locationRow, constraints);
+
+        JButton addButton = new JButton("ADD NEW JAVA FILE");
+        addButton.setFont(UIManager.getFont("Button.font").deriveFont(18f));
+        addButton.setPreferredSize(new Dimension(0, 54));
+        addButton.addActionListener(e -> {
+
+            if (createNewJavaFile(
+                    frame,
+                    tabbedPane,
+                    nameField.getText(),
+                    locationField.getText()
+            )) {
+
+                nameField.setText("");
+                locationField.setText("");
+
+            }
+        });
+
+        panel.add(formPanel, BorderLayout.NORTH);
+        panel.add(addButton, BorderLayout.SOUTH);
+
+        tabbedPane.addTab("ADD", panel);
+        tabbedPane.setTabComponentAt(
+                tabbedPane.indexOfComponent(panel),
+                createNewFileTabHeader()
+        );
+        tabbedPane.setSelectedComponent(panel);
+    }
+
+    private static JPanel createNewFileTabHeader() {
+
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+        panel.setOpaque(false);
+
+        JLabel plusLabel = new JLabel("ADD");
+        plusLabel.setOpaque(false);
+        plusLabel.setFont(UIManager.getFont("Label.font").deriveFont(Font.BOLD, 16f));
+        plusLabel.setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 10));
+
+        panel.add(plusLabel);
+
+        return panel;
+    }
+
+    private static boolean createNewJavaFile(
+            JFrame frame,
+            JTabbedPane tabbedPane,
+            String rawName,
+            String rawLocation
+    ) {
+
+        String className = rawName.trim();
+
+        if (className.endsWith(".java")) {
+
+            className = className.substring(0, className.length() - 5);
+
+        }
+
+        if (!className.matches("[A-Za-z_$][A-Za-z0-9_$]*")) {
+
+            JOptionPane.showMessageDialog(frame, "Please enter a valid Java class name.");
+            return false;
+
+        }
+
+        if (rawLocation.trim().isEmpty()) {
+
+            JOptionPane.showMessageDialog(frame, "Please choose a file location.");
+            return false;
+
+        }
+
+        try {
+
+            Path folder = Paths.get(rawLocation.trim()).toAbsolutePath().normalize();
+
+            if (!Files.isDirectory(folder)) {
+
+                JOptionPane.showMessageDialog(frame, "File location must be a folder.");
+                return false;
+
+            }
+
+            Path javaFile = folder.resolve(className + ".java");
+
+            if (Files.exists(javaFile)) {
+
+                JOptionPane.showMessageDialog(frame, "Java file already exists.");
+                return false;
+
+            }
+
+            String code = createDefaultJavaCode(className);
+
+            Files.writeString(javaFile, code, StandardCharsets.UTF_8);
+
+            Path importedPath = importToTemp(javaFile);
+            openOrUpdateTab(frame, tabbedPane, className, code, importedPath);
+            return true;
+
+        } catch (IOException ex) {
+
+            JOptionPane.showMessageDialog(frame, "Failed to create Java file: " + ex.getMessage());
+            return false;
+
+        }
+    }
+
+    private static String createDefaultJavaCode(String className) {
+
+        return "public class " + className + " {\n"
+                + "    public static void main(String[] args) {\n"
+                + "\n"
+                + "\n"
+                + "\n"
+                + "    }\n"
+                + "}\n";
+    }
+
+    private static int getNewFileTabIndex(JTabbedPane tabbedPane) {
+
+        for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+
+            Component component = tabbedPane.getComponentAt(i);
+
+            if ("NEW_JAVA_FILE_TAB".equals(component.getName())) {
+
+                return i;
+
+            }
+        }
+
+        return -1;
+    }
+
+    private static void addTabBeforeNewFileTab(
+            JTabbedPane tabbedPane,
+            String title,
+            Component component
+    ) {
+
+        int newFileTabIndex = getNewFileTabIndex(tabbedPane);
+
+        if (newFileTabIndex == -1) {
+
+            tabbedPane.addTab(title, component);
+
+        } else {
+
+            tabbedPane.insertTab(title, null, component, null, newFileTabIndex);
+
+        }
+    }
+
+    private static void installTabInteractions(
+            JTabbedPane tabbedPane,
+            JPanel header,
+            JLabel titleLabel,
+            Component tabComponent
+    ) {
+
+        MouseAdapter adapter = new MouseAdapter() {
+
+            @Override
+            public void mousePressed(MouseEvent e) {
+
+                if (SwingUtilities.isLeftMouseButton(e)) {
+
+                    draggedTabComponent = tabComponent;
+
+                }
+
+                showTabPopupIfNeeded(e, tabbedPane, tabComponent);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+
+                showTabPopupIfNeeded(e, tabbedPane, tabComponent);
+                draggedTabComponent = null;
+            }
+
+            @Override
+            public void mouseDragged(MouseEvent e) {
+
+                if (draggedTabComponent != tabComponent) {
+
+                    return;
+
+                }
+
+                Point point = SwingUtilities.convertPoint(e.getComponent(), e.getPoint(), tabbedPane);
+                int targetIndex = tabbedPane.indexAtLocation(point.x, point.y);
+                int sourceIndex = tabbedPane.indexOfComponent(tabComponent);
+                int addIndex = getNewFileTabIndex(tabbedPane);
+
+                if (sourceIndex == -1 || targetIndex == -1 || addIndex == -1) {
+
+                    return;
+
+                }
+
+                if (targetIndex == addIndex) {
+
+                    targetIndex = addIndex - 1;
+
+                }
+
+                if (targetIndex >= 0 && targetIndex != sourceIndex) {
+
+                    moveTabComponent(tabbedPane, tabComponent, targetIndex);
+
+                }
+            }
+        };
+
+        header.addMouseListener(adapter);
+        header.addMouseMotionListener(adapter);
+        titleLabel.addMouseListener(adapter);
+        titleLabel.addMouseMotionListener(adapter);
+        header.setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
+        titleLabel.setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
+    }
+
+    private static void showTabPopupIfNeeded(
+            MouseEvent event,
+            JTabbedPane tabbedPane,
+            Component tabComponent
+    ) {
+
+        boolean rightButtonPressed = SwingUtilities.isRightMouseButton(event)
+                && event.getID() == MouseEvent.MOUSE_PRESSED;
+
+        if (!event.isPopupTrigger() && !rightButtonPressed) {
+
+            return;
+
+        }
+
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem moveLeft = new JMenuItem("Move Tab to Far Left");
+        JMenuItem moveRight = new JMenuItem("Move Tab to Far Right");
+        JMenuItem closeLeft = new JMenuItem("Close All Tabs to the Left");
+        JMenuItem closeRight = new JMenuItem("Close All Tabs to the Right");
+
+        moveLeft.addActionListener(e -> moveTabComponent(tabbedPane, tabComponent, 0));
+        moveRight.addActionListener(e -> {
+
+            int addIndex = getNewFileTabIndex(tabbedPane);
+
+            if (addIndex != -1) {
+
+                moveTabComponent(tabbedPane, tabComponent, Math.max(0, addIndex - 1));
+
+            }
+        });
+        closeLeft.addActionListener(e -> closeTabsToLeft(tabbedPane, tabComponent));
+        closeRight.addActionListener(e -> closeTabsToRight(tabbedPane, tabComponent));
+
+        int tabIndex = tabbedPane.indexOfComponent(tabComponent);
+        int addIndex = getNewFileTabIndex(tabbedPane);
+        moveLeft.setEnabled(tabIndex > 0);
+        moveRight.setEnabled(tabIndex >= 0 && tabIndex < addIndex - 1);
+        closeLeft.setEnabled(tabIndex > 0);
+        closeRight.setEnabled(tabIndex >= 0 && tabIndex < addIndex - 1);
+
+        menu.add(moveLeft);
+        menu.add(moveRight);
+        menu.addSeparator();
+        menu.add(closeLeft);
+        menu.add(closeRight);
+        menu.show(event.getComponent(), event.getX(), event.getY());
+    }
+
+    private static void moveTabComponent(
+            JTabbedPane tabbedPane,
+            Component tabComponent,
+            int targetIndex
+    ) {
+
+        int sourceIndex = tabbedPane.indexOfComponent(tabComponent);
+        int addIndex = getNewFileTabIndex(tabbedPane);
+
+        if (sourceIndex == -1 || addIndex == -1 || sourceIndex == addIndex) {
+
+            return;
+
+        }
+
+        int maximumIndex = Math.max(0, addIndex - 1);
+        int destination = Math.max(0, Math.min(targetIndex, maximumIndex));
+
+        if (sourceIndex == destination) {
+
+            return;
+
+        }
+
+        String title = tabbedPane.getTitleAt(sourceIndex);
+        Icon icon = tabbedPane.getIconAt(sourceIndex);
+        String tooltip = tabbedPane.getToolTipTextAt(sourceIndex);
+        boolean enabled = tabbedPane.isEnabledAt(sourceIndex);
+        Component tabHeader = tabbedPane.getTabComponentAt(sourceIndex);
+        boolean selected = tabbedPane.getSelectedComponent() == tabComponent;
+
+        tabbedPane.removeTabAt(sourceIndex);
+        destination = Math.min(destination, getNewFileTabIndex(tabbedPane));
+        tabbedPane.insertTab(title, icon, tabComponent, tooltip, destination);
+        tabbedPane.setEnabledAt(destination, enabled);
+        tabbedPane.setTabComponentAt(destination, tabHeader);
+
+        if (selected) {
+
+            tabbedPane.setSelectedComponent(tabComponent);
+
+        }
+    }
+
+    private static void closeTabsToLeft(JTabbedPane tabbedPane, Component tabComponent) {
+
+        int index = tabbedPane.indexOfComponent(tabComponent);
+
+        for (int i = index - 1; i >= 0; i--) {
+
+            removeTabAt(tabbedPane, i);
+
+        }
+    }
+
+    private static void closeTabsToRight(JTabbedPane tabbedPane, Component tabComponent) {
+
+        int index = tabbedPane.indexOfComponent(tabComponent);
+        int addIndex = getNewFileTabIndex(tabbedPane);
+
+        for (int i = addIndex - 1; i > index; i--) {
+
+            removeTabAt(tabbedPane, i);
+
+        }
+    }
+
+    private static void removeTabComponent(JTabbedPane tabbedPane, Component tabComponent) {
+
+        int index = tabbedPane.indexOfComponent(tabComponent);
+
+        if (index != -1) {
+
+            removeTabAt(tabbedPane, index);
+
+        }
+    }
+
+    private static void removeTabAt(JTabbedPane tabbedPane, int index) {
+
+        if (index < 0 || index >= tabbedPane.getTabCount()) {
+
+            return;
+
+        }
+
+        Component tabComponent = tabbedPane.getComponentAt(index);
+
+        if ("NEW_JAVA_FILE_TAB".equals(tabComponent.getName())) {
+
+            return;
+
+        }
+
+        if (tabComponent instanceof JScrollPane) {
+
+            Component view = ((JScrollPane) tabComponent).getViewport().getView();
+
+            if (view instanceof JTextArea) {
+
+                String editorKey = null;
+
+                for (Map.Entry<String, JTextArea> entry : editorMap.entrySet()) {
+
+                    if (entry.getValue() == view) {
+
+                        editorKey = entry.getKey();
+                        break;
+
+                    }
+                }
+
+                if (editorKey != null) {
+
+                    editorMap.remove(editorKey);
+                    editorFileMap.remove(editorKey);
+
+                }
+            }
+        }
+
+        Path folderKey = null;
+
+        for (Map.Entry<Path, Component> entry : folderTabMap.entrySet()) {
+
+            if (entry.getValue() == tabComponent) {
+
+                folderKey = entry.getKey();
+                break;
+
+            }
+        }
+
+        if (folderKey != null) {
+
+            folderTabMap.remove(folderKey);
+
+        }
+
+        tabbedPane.removeTabAt(index);
     }
 
     private static void openFolderTab(JFrame frame, JTabbedPane tabbedPane, Path folderPath) {
@@ -1714,7 +2189,7 @@ public class MiniJavaIDE {
         folderPanel.setBackground(Color.WHITE);
         addFileDropSupport(frame, tabbedPane, folderPanel);
 
-        tabbedPane.addTab(normalizedPath.getFileName().toString(), folderPanel);
+        addTabBeforeNewFileTab(tabbedPane, normalizedPath.getFileName().toString(), folderPanel);
         tabbedPane.setTabComponentAt(
                 tabbedPane.indexOfComponent(folderPanel),
                 createFolderTabHeader(frame, tabbedPane, normalizedPath, folderPanel)
@@ -1754,19 +2229,13 @@ public class MiniJavaIDE {
         closeButton.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         closeButton.addActionListener(e -> {
 
-            int index = tabbedPane.indexOfComponent(folderPanel);
-
-            if (index != -1) {
-
-                tabbedPane.remove(index);
-                folderTabMap.remove(folderPath);
-
-            }
+            removeTabComponent(tabbedPane, folderPanel);
         });
 
         panel.add(titleLabel);
         panel.add(openButton);
         panel.add(closeButton);
+        installTabInteractions(tabbedPane, panel, titleLabel, folderPanel);
 
         return panel;
     }
@@ -2242,7 +2711,7 @@ public class MiniJavaIDE {
             JScrollPane scroll = new JScrollPane(area);
             addLineNumbers(area, scroll);
 
-            tabbedPane.addTab(className, scroll);
+            addTabBeforeNewFileTab(tabbedPane, className, scroll);
             tabbedPane.setTabComponentAt(
                     tabbedPane.indexOfComponent(scroll),
                     createTabHeader(frame, tabbedPane, className, area, scroll)
