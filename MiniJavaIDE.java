@@ -1781,12 +1781,12 @@ public class MiniJavaIDE {
         tabbedPane.addTab("ADD", panel);
         tabbedPane.setTabComponentAt(
                 tabbedPane.indexOfComponent(panel),
-                createNewFileTabHeader()
+                createNewFileTabHeader(tabbedPane, panel)
         );
         tabbedPane.setSelectedComponent(panel);
     }
 
-    private static JPanel createNewFileTabHeader() {
+    private static JPanel createNewFileTabHeader(JTabbedPane tabbedPane, Component tabComponent) {
 
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
         panel.setOpaque(false);
@@ -1797,6 +1797,22 @@ public class MiniJavaIDE {
         plusLabel.setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 10));
 
         panel.add(plusLabel);
+
+        MouseAdapter selectAdapter = new MouseAdapter() {
+
+            @Override
+            public void mousePressed(MouseEvent e) {
+
+                if (SwingUtilities.isLeftMouseButton(e)) {
+
+                    tabbedPane.setSelectedComponent(tabComponent);
+
+                }
+            }
+        };
+
+        panel.addMouseListener(selectAdapter);
+        plusLabel.addMouseListener(selectAdapter);
 
         return panel;
     }
@@ -1926,6 +1942,7 @@ public class MiniJavaIDE {
 
                 if (SwingUtilities.isLeftMouseButton(e)) {
 
+                    tabbedPane.setSelectedComponent(tabComponent);
                     draggedTabComponent = tabComponent;
 
                 }
